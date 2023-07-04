@@ -19,8 +19,8 @@ if [ ! -d ${build_dir}/${output} ];then
 fi
 
 default_golang() {
-  export GOROOT=/usr/local/go
-  go=$GOROOT/bin/go
+  export GOROOT=/usr/lib/go-1.18
+  go=/usr/bin/go
 }
 
 Build() {

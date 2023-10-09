@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,9 +27,9 @@ import (
 func CmdDrive() cli.Command {
 	return cli.Command{
 		Name:  "drive",
-		Usage: "切换网盘（文件网盘/相册网盘）",
+		Usage: "切换网盘（备份盘/资源库/相册）",
 		Description: `
-	切换已登录的阿里云盘的云工作网盘（文件网盘/相册网盘）
+	切换已登录账号的阿里云盘的工作网盘（备份盘/资源库/相册）
 	如果运行该条命令没有提供参数, 程序将会列出所有的网盘列表, 供选择切换.
 
 	示例:
@@ -99,6 +99,11 @@ func RunSwitchDriveList(targetDriveId string) {
 			if activeUser.Workdir == "" {
 				config.Config.ActiveUser().Workdir = "/"
 				config.Config.ActiveUser().WorkdirFileEntity = *aliyunpan.NewFileEntityForRootDir()
+			}
+		} else if activeUser.IsResourceDriveActive() {
+			if activeUser.ResourceWorkdir == "" {
+				config.Config.ActiveUser().ResourceWorkdir = "/"
+				config.Config.ActiveUser().ResourceWorkdirFileEntity = *aliyunpan.NewFileEntityForRootDir()
 			}
 		} else if activeUser.IsAlbumDriveActive() {
 			if activeUser.AlbumWorkdir == "" {

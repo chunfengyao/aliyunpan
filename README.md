@@ -1,5 +1,5 @@
 # 关于
-阿里云盘CLI。仿 Linux shell 文件处理命令的阿里云盘命令行客户端，支持JavaScript插件，支持同步备份功能。
+阿里云盘CLI。仿 Linux shell 文件处理命令的阿里云盘命令行客户端，支持JavaScript插件，支持同步备份功能，支持相册批量下载。
 
 # 特色
 1. 多平台支持, 支持 Windows, macOS, linux(x86/x64/arm), android, iOS 等
@@ -11,6 +11,7 @@
 7. 命令和文件路径输入支持Tab键自动补全，路径支持通配符匹配模式
 8. 支持阿里云ECS环境下使用内网链接上传/下载，速度更快(只支持阿里经典网络，最高可达100MB/s)，还可以节省公网带宽流量(配置transfer_url_type=2即可)
 9. 支持[JavaScript插件](docs/manual.md#JavaScript插件)，你可以按照自己的需要定制上传/下载中关键步骤的行为，最大程度满足自己的个性化需求
+10. 支持个人相册的相关操作，支持批量下载相册所有照片、视频文件到本地
 
 # 目录
 - [关于](#关于)
@@ -30,6 +31,7 @@
     - [启动程序](#启动程序)
     - [查看帮助](#查看帮助)
     - [登录](#登录)
+    - [切换网盘](#切换网盘)
     - [查看文件列表](#查看文件列表)
     - [下载文件](#下载文件)
     - [上传文件](#上传文件)
@@ -59,9 +61,9 @@
 
 参考例子：
 ```shell
-wget https://github.com/tickstep/aliyunpan/releases/download/v0.2.8/aliyunpan-v0.2.8-linux-amd64.zip
-unzip aliyunpan-v0.2.8-linux-amd64.zip
-cd aliyunpan-v0.2.8-linux-amd64
+wget https://github.com/tickstep/aliyunpan/releases/download/v0.2.9/aliyunpan-v0.2.9-linux-amd64.zip
+unzip aliyunpan-v0.2.9-linux-amd64.zip
+cd aliyunpan-v0.2.9-linux-amd64
 ./aliyunpan
 ```
 
@@ -112,7 +114,7 @@ winget install tickstep.aliyunpan --silent
 2. 备份云盘文件，即下载网盘文件到本地，始终保持网盘的文件有一个完整的备份在本地
 3. 双向备份，保持网盘文件和本地文件严格一致
 ```
-docker run -d --name=aliyunpan-sync --restart=always -v "<your local dir>:/home/app/data" -e TZ="Asia/Shanghai" -e ALIYUNPAN_REFRESH_TOKEN="<your refreshToken>" -e ALIYUNPAN_PAN_DIR="<your drive pan dir>" -e ALIYUNPAN_SYNC_MODE="upload" -e ALIYUNPAN_TASK_STEP="sync" tickstep/aliyunpan-sync:v0.2.8
+docker run -d --name=aliyunpan-sync --restart=always -v "<your local dir>:/home/app/data" -e TZ="Asia/Shanghai" -e ALIYUNPAN_REFRESH_TOKEN="<your refreshToken>" -e ALIYUNPAN_PAN_DIR="<your drive pan dir>" -e ALIYUNPAN_SYNC_MODE="upload" -e ALIYUNPAN_TASK_STEP="sync" tickstep/aliyunpan-sync:v0.2.9
  
   
 <your local dir>：本地目录绝对路径，例如：/tickstep/Documents/设计文档
@@ -191,6 +193,20 @@ aliyunpan > login -RefreshToken=32994cd2c43...4d505fa79
 
 阿里云盘登录成功:  tickstep
 aliyunpan:/ tickstep$ 
+```
+
+### 切换网盘
+支持切换备份盘、资源库，默认工作在备份盘下。
+```shell
+aliyunpan:/ tickstep(备份盘)$ drive
+  #   DRIVE ID   网盘名称  
+  1    11519221   备份盘   
+  2  1311893110   资源库   
+  3    61104421    相册
+  
+输入要切换的网盘 # 值 > 2
+切换到网盘：资源库                     
+aliyunpan:/ tickstep(资源库)$ 
 ```
 
 ### 查看文件列表

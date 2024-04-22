@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,6 +21,7 @@ import (
 	"github.com/tickstep/aliyunpan/cmder/cmdliner"
 	"github.com/tickstep/aliyunpan/cmder/cmdutil"
 	"github.com/tickstep/aliyunpan/internal/config"
+	"github.com/tickstep/aliyunpan/internal/global"
 	"github.com/tickstep/aliyunpan/internal/utils"
 	"github.com/tickstep/aliyunpan/library/requester/transfer"
 	"github.com/tickstep/library-go/cachepool"
@@ -66,7 +67,7 @@ func getReleaseFromTicstep(client *requester.HTTPClient, showPrompt bool) *Relea
 		ipAddr = "127.0.0.1"
 	}
 	fmt.Fprintf(&fullUrl, "http://api.tickstep.com/update/tickstep/aliyunpan/releases/latest?ip=%s&os=%s&arch=%s&version=%s",
-		ipAddr, runtime.GOOS, runtime.GOARCH, config.AppVersion)
+		ipAddr, runtime.GOOS, runtime.GOARCH, global.AppVersion)
 	resp, err := client.Req(http.MethodGet, fullUrl.String(), nil, nil)
 	if resp != nil {
 		defer resp.Body.Close()
@@ -211,29 +212,25 @@ func CheckUpdate(version string, yes bool) {
 
 	builder := &strings.Builder{}
 	builder.WriteString(ReleaseName + "-" + releaseInfo.TagName + "-" + runtime.GOOS + "-.*?")
-	if runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64") {
-		builder.WriteString("arm")
-	} else {
-		switch runtime.GOARCH {
-		case "amd64":
-			builder.WriteString("(amd64|x86_64|x64)")
-		case "386":
-			builder.WriteString("(386|x86)")
-		case "arm":
-			builder.WriteString("(armv5|armv7|arm)")
-		case "arm64":
-			builder.WriteString("arm64")
-		case "mips":
-			builder.WriteString("mips")
-		case "mips64":
-			builder.WriteString("mips64")
-		case "mipsle":
-			builder.WriteString("(mipsle|mipsel)")
-		case "mips64le":
-			builder.WriteString("(mips64le|mips64el)")
-		default:
-			builder.WriteString(runtime.GOARCH)
-		}
+	switch runtime.GOARCH {
+	case "amd64":
+		builder.WriteString("(amd64|x86_64|x64)")
+	case "386":
+		builder.WriteString("(386|x86)")
+	case "arm":
+		builder.WriteString("(armv5|armv7|arm)")
+	case "arm64":
+		builder.WriteString("arm64")
+	case "mips":
+		builder.WriteString("mips")
+	case "mips64":
+		builder.WriteString("mips64")
+	case "mipsle":
+		builder.WriteString("(mipsle|mipsel)")
+	case "mips64le":
+		builder.WriteString("(mips64le|mips64el)")
+	default:
+		builder.WriteString(runtime.GOARCH)
 	}
 	builder.WriteString("\\.zip")
 

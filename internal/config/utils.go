@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,11 +17,13 @@ import (
 	"encoding/hex"
 	"github.com/olekukonko/tablewriter"
 	"github.com/tickstep/aliyunpan/cmder/cmdtable"
+	"github.com/tickstep/aliyunpan/library/nets"
 	"github.com/tickstep/library-go/converter"
 	"github.com/tickstep/library-go/crypto"
 	"github.com/tickstep/library-go/ids"
 	"github.com/tickstep/library-go/logger"
 	"math/rand"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -109,7 +111,7 @@ func DecryptString(text string) string {
 	return string(r)
 }
 
-// isFolderExist 判断文件夹是否存在
+// IsFolderExist 判断文件夹是否存在
 func IsFolderExist(pathStr string) bool {
 	fi, err := os.Stat(pathStr)
 	if err != nil {
@@ -134,4 +136,43 @@ func RandomDeviceId() string {
 		str.WriteByte(byte(STR_SET[rand.Intn(len(STR_SET))]))
 	}
 	return str.String()
+}
+
+// ParseLocalAddress 解析网络接口配置为对应的本地IP地址
+func ParseLocalAddress(localAddrs string, filterIpType string) []string {
+	allLocalAddress, _ := nets.GetLocalNetInterfaceAddress()
+	localAddrNames := strings.Split(localAddrs, ",")
+	ips := []string{}
+	for _, addr := range localAddrNames {
+		if addr == "" {
+			continue
+		}
+		if net.ParseIP(addr) == nil {
+			// maybe local interface name
+			if localAddr := allLocalAddress.GetByName(addr); localAddr != nil {
+				if localAddr.IPv4 != "" {
+					if filterIpType == "any" || filterIpType == "" { // 不限制
+						ips = append(ips, localAddr.IPv4)
+					} else {
+						if filterIpType == "ipv4" {
+							ips = append(ips, localAddr.IPv4)
+						}
+					}
+				}
+				if localAddr.IPv6 != "" {
+					if filterIpType == "any" || filterIpType == "" { // 不限制
+						ips = append(ips, localAddr.IPv6)
+					} else {
+						if filterIpType == "ipv6" {
+							ips = append(ips, localAddr.IPv6)
+						}
+					}
+				}
+			}
+		} else {
+			// ip
+			ips = append(ips, addr)
+		}
+	}
+	return ips
 }

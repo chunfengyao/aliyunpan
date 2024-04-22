@@ -15,9 +15,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/olekukonko/tablewriter"
-	"github.com/tickstep/aliyunpan/cmder"
-	"github.com/tickstep/aliyunpan/cmder/cmdtable"
+	"github.com/tickstep/aliyunpan/internal/global"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -30,9 +28,12 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/olekukonko/tablewriter"
 	"github.com/peterh/liner"
+	"github.com/tickstep/aliyunpan/cmder"
 	"github.com/tickstep/aliyunpan/cmder/cmdliner"
 	"github.com/tickstep/aliyunpan/cmder/cmdliner/args"
+	"github.com/tickstep/aliyunpan/cmder/cmdtable"
 	"github.com/tickstep/aliyunpan/cmder/cmdutil"
 	"github.com/tickstep/aliyunpan/cmder/cmdutil/escaper"
 	"github.com/tickstep/aliyunpan/internal/command"
@@ -51,7 +52,7 @@ const (
 
 var (
 	// Version 版本号
-	Version = "v0.2.9"
+	Version = "v0.3.1"
 
 	// 命令历史文件
 	historyFilePath = filepath.Join(config.GetConfigDir(), "aliyunpan_command_history.txt")
@@ -61,7 +62,7 @@ var (
 )
 
 func init() {
-	config.AppVersion = Version
+	global.AppVersion = Version
 	cmdutil.ChWorkDir()
 
 	err := config.Config.Init()
@@ -83,7 +84,8 @@ func checkLoginExpiredAndRelogin() {
 		command.TryLogin()
 	} else {
 		// 刷新过期Token并保存到配置文件
-		command.RefreshTokenInNeed(activeUser, config.Config.DeviceName)
+		command.RefreshWebTokenInNeed(activeUser, config.Config.DeviceName)
+		command.RefreshOpenTokenInNeed(activeUser)
 	}
 	command.SaveConfigFunc(nil)
 }
@@ -100,7 +102,13 @@ func main() {
 			// Token刷新进程，不管是CLI命令行模式，还是直接命令模式，本刷新任务都会执行
 			time.Sleep(time.Duration(1) * time.Minute)
 			//time.Sleep(time.Duration(5) * time.Second)
-			checkLoginExpiredAndRelogin()
+			for _, u := range config.Config.UserList {
+				if u.UserId == config.Config.ActiveUID {
+					if u.PanClient() != nil {
+						checkLoginExpiredAndRelogin()
+					}
+				}
+			}
 		}
 	}()
 
@@ -147,7 +155,7 @@ func main() {
 
 		os.Setenv(config.EnvVerbose, c.String("verbose"))
 		isCli = true
-		config.IsAppInCliMode = true
+		global.IsAppInCliMode = true
 		logger.Verbosef("提示: 你已经开启VERBOSE调试日志\n\n")
 
 		var (
@@ -172,7 +180,7 @@ func main() {
 				lineArgs                   = args.Parse(line)
 				numArgs                    = len(lineArgs)
 				acceptCompleteFileCommands = []string{
-					"cd", "cp", "xcp", "download", "ls", "mkdir", "mv", "pwd", "rename", "rm", "share", "upload", "login", "loglist", "logout",
+					"cd", "cp", "xcp", "download", "ls", "mkdir", "mv", "pwd", "rename", "rm", "share", "save", "upload", "login", "loglist", "logout",
 					"clear", "quit", "exit", "quota", "who", "sign", "update", "who", "su", "config",
 					"drive", "export", "import", "sync", "tree",
 				}
@@ -262,6 +270,8 @@ func main() {
 					targetDir = path.Dir(targetDir)
 				}
 			}
+
+			// tab键补全路径
 			files, err := activeUser.CacheFilesDirectoriesList(targetDir)
 			if err != nil {
 				return
@@ -309,9 +319,9 @@ func main() {
 		// check update
 		command.ReloadConfigFunc(c)
 		if config.Config.UpdateCheckInfo.LatestVer != "" {
-			if utils.ParseVersionNum(config.Config.UpdateCheckInfo.LatestVer) > utils.ParseVersionNum(config.AppVersion) {
+			if utils.ParseVersionNum(config.Config.UpdateCheckInfo.LatestVer) > utils.ParseVersionNum(global.AppVersion) {
 				fmt.Printf("\n当前的软件版本为：%s， 现在有新版本 %s 可供更新，强烈推荐进行更新！（可以输入 update 命令进行更新）\n\n",
-					config.AppVersion, config.Config.UpdateCheckInfo.LatestVer)
+					global.AppVersion, config.Config.UpdateCheckInfo.LatestVer)
 			}
 		}
 		go func() {
@@ -415,7 +425,7 @@ func main() {
 		command.CmdQuota(),
 
 		// Token操作
-		command.CmdToken(),
+		//command.CmdToken(),
 
 		// 切换工作目录 cd
 		command.CmdCd(),
@@ -441,6 +451,9 @@ func main() {
 		// 备份盘和资源库之间拷贝文件 xcp
 		command.CmdXcp(),
 
+		// 复制文件/目录 cp
+		command.CmdCp(),
+
 		// 移动文件/目录 mv
 		command.CmdMv(),
 
@@ -449,6 +462,9 @@ func main() {
 
 		// 分享文件/目录 share
 		command.CmdShare(),
+
+		// 保存分享文件/目录 save
+		command.CmdSave(),
 
 		// 同步备份 sync
 		command.CmdSync(),
@@ -484,7 +500,7 @@ func main() {
 		command.CmdTool(),
 
 		// 相簿
-		command.CmdAlbum(),
+		//command.CmdAlbum(), // 先移除，需要重构&适配
 
 		// 显示命令历史
 		{

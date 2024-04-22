@@ -52,7 +52,7 @@ func CmdQuota() cli.Command {
 }
 
 func RunGetQuotaInfo() (quotaInfo *QuotaInfo, error error) {
-	user, err := GetActivePanClient().GetUserInfo()
+	user, err := GetActivePanClient().OpenapiPanClient().GetUserInfo()
 	if err != nil {
 		return nil, err
 	}

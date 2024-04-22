@@ -61,6 +61,9 @@ const (
 
 	// DefaultDeviceName 默认客户端名称
 	DefaultDeviceName = "Chrome浏览器"
+
+	// DefaultClientId 默认的clientId
+	DefaultClientId = "cf9f70e8fc61430f8ec5ab5cadf31375"
 )
 
 var (
@@ -69,11 +72,6 @@ var (
 
 	// Config 配置信息, 由外部调用
 	Config = NewConfig(configFilePath)
-
-	AppVersion string
-
-	// IsAppInCliMode 是否在交互模式
-	IsAppInCliMode = false
 )
 
 type UpdateCheckInfo struct {
@@ -95,7 +93,6 @@ type PanConfig struct {
 
 	MaxDownloadRate int64 `json:"maxDownloadRate"` // 限制最大下载速度，单位 B/s, 即字节/每秒
 	MaxUploadRate   int64 `json:"maxUploadRate"`   // 限制最大上传速度，单位 B/s, 即字节/每秒
-	TransferUrlType int   `json:"transferUrlType"` // 上传/下载URL类别，1-默认，2-阿里云ECS
 
 	SaveDir string `json:"saveDir"` // 下载储存路径
 
@@ -109,6 +106,10 @@ type PanConfig struct {
 
 	DeviceId   string `json:"deviceId"`   // 客户端ID，用于标识登录客户端，阿里单个账号最多允许10个客户端同时登录
 	DeviceName string `json:"deviceName"` // 客户端名称，默认为：Chrome浏览器
+
+	// Openapi客户端信息
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
 
 	configFilePath string
 	configFile     *os.File
@@ -197,10 +198,6 @@ func (c *PanConfig) init() error {
 	if c.Proxy != "" {
 		requester.SetGlobalProxy(c.Proxy)
 	}
-	// 设置本地网卡地址
-	if c.LocalAddrs != "" {
-		requester.SetLocalTCPAddrList(strings.Split(c.LocalAddrs, ",")...)
-	}
 
 	// 设置域名解析策略 IPv4 or IPv6
 	t := requester.IPAny
@@ -210,6 +207,15 @@ func (c *PanConfig) init() error {
 		t = requester.IPv6
 	}
 	requester.SetPreferIPType(t)
+
+	// 设置本地网卡地址
+	if c.LocalAddrs != "" {
+		ips := ParseLocalAddress(c.LocalAddrs, strings.ToLower(c.PreferIPType))
+		if len(ips) > 0 {
+			logger.Verboseln("bind local address list: ", ips)
+			requester.SetLocalTCPAddrList(ips...)
+		}
+	}
 
 	return nil
 }
@@ -270,6 +276,9 @@ func (c *PanConfig) loadConfigFromFile() (err error) {
 	if c.DeviceName == "" {
 		c.DeviceName = DefaultDeviceName
 	}
+	if c.ClientId == "" {
+		c.ClientId = DefaultClientId
+	}
 	return nil
 }
 
@@ -294,7 +303,8 @@ func (c *PanConfig) initDefaultConfig() {
 	c.VideoFileExtensions = DefaultVideoFileExtensions
 	c.DeviceId = RandomDeviceId() // 生成默认客户端ID
 	c.DeviceName = DefaultDeviceName
-	c.FileRecordConfig = "1" // 默认开启
+	c.ClientId = DefaultClientId
+	c.FileRecordConfig = "2" // 默认关闭
 	c.PreferIPType = "ipv4"  // 默认优先IPv4
 }
 
@@ -390,7 +400,10 @@ func (c *PanConfig) ActiveUser() *PanUser {
 			if u.UserId == c.ActiveUID {
 				if u.PanClient() == nil {
 					// restore client
-					user, err := SetupUserByCookie(&u.WebToken, c.DeviceId, c.DeviceName)
+					user, err := SetupUserByCookie(u.OpenapiToken, u.WebapiToken,
+						u.TicketId, u.UserId,
+						c.DeviceId, c.DeviceName,
+						c.ClientId, c.ClientSecret)
 					if err != nil {
 						logger.Verboseln("setup user error")
 						return nil
@@ -398,34 +411,46 @@ func (c *PanConfig) ActiveUser() *PanUser {
 					u.panClient = user.panClient
 					u.Nickname = user.Nickname
 
+					if u.ActiveDriveId == "" {
+						u.ActiveDriveId = user.DriveList.GetFileDriveId()
+					}
 					u.DriveList = user.DriveList
 					// check workdir valid or not
 					if user.IsFileDriveActive() {
-						fe, err1 := u.PanClient().FileInfoByPath(u.ActiveDriveId, u.Workdir)
+						fe, err1 := u.PanClient().OpenapiPanClient().FileInfoByPath(u.ActiveDriveId, u.Workdir)
 						if err1 != nil {
 							// default to root
 							u.Workdir = "/"
 							u.WorkdirFileEntity = *aliyunpan.NewFileEntityForRootDir()
 						} else {
 							u.WorkdirFileEntity = *fe
+							if u.Workdir == "" {
+								u.Workdir = "/"
+							}
 						}
 					} else if user.IsResourceDriveActive() {
-						fe, err1 := u.PanClient().FileInfoByPath(u.ActiveDriveId, u.ResourceWorkdir)
+						fe, err1 := u.PanClient().OpenapiPanClient().FileInfoByPath(u.ActiveDriveId, u.ResourceWorkdir)
 						if err1 != nil {
 							// default to root
 							u.ResourceWorkdir = "/"
 							u.ResourceWorkdirFileEntity = *aliyunpan.NewFileEntityForRootDir()
 						} else {
 							u.ResourceWorkdirFileEntity = *fe
+							if u.ResourceWorkdir == "" {
+								u.ResourceWorkdir = "/"
+							}
 						}
 					} else if user.IsAlbumDriveActive() {
-						fe, err1 := u.PanClient().FileInfoByPath(u.ActiveDriveId, u.AlbumWorkdir)
+						fe, err1 := u.PanClient().WebapiPanClient().FileInfoByPath(u.ActiveDriveId, u.AlbumWorkdir)
 						if err1 != nil {
 							// default to root
 							u.AlbumWorkdir = "/"
 							u.AlbumWorkdirFileEntity = *aliyunpan.NewFileEntityForRootDir()
 						} else {
 							u.AlbumWorkdirFileEntity = *fe
+							if u.AlbumWorkdir == "" {
+								u.AlbumWorkdir = "/"
+							}
 						}
 					}
 				}
@@ -433,7 +458,7 @@ func (c *PanConfig) ActiveUser() *PanUser {
 				return u
 			}
 		}
-		return &PanUser{}
+		return nil
 	}
 	return c.activeUser
 }
@@ -444,9 +469,12 @@ func (c *PanConfig) SetActiveUser(user *PanUser) *PanUser {
 		if u.UserId == user.UserId {
 			// update user info
 			u.Nickname = user.Nickname
-			u.WebToken = user.WebToken
-			u.RefreshToken = user.RefreshToken
-			u.TokenId = user.TokenId
+			u.WebapiToken = user.WebapiToken
+			u.OpenapiToken = user.OpenapiToken
+			u.TicketId = user.TicketId
+			if u.PanClient() != nil && user.PanClient() != nil {
+				u.UpdateClient(user.PanClient().OpenapiPanClient(), user.PanClient().WebapiPanClient())
+			}
 			needToInsert = false
 			break
 		}
@@ -474,9 +502,9 @@ func (c *PanConfig) NumLogins() int {
 }
 
 // SwitchUser 切换登录用户
-func (c *PanConfig) SwitchUser(uid, username string) (*PanUser, error) {
+func (c *PanConfig) SwitchUser(uid string) (*PanUser, error) {
 	for _, u := range c.UserList {
-		if u.UserId == uid || u.AccountName == username {
+		if u.UserId == uid {
 			return c.SetActiveUser(u), nil
 		}
 	}
@@ -492,7 +520,7 @@ func (c *PanConfig) DeleteUser(uid string) (*PanUser, error) {
 			c.ActiveUID = ""
 			c.activeUser = nil
 			if len(c.UserList) > 0 {
-				c.SwitchUser(c.UserList[0].UserId, "")
+				c.SwitchUser(c.UserList[0].UserId)
 			}
 			return u, nil
 		}

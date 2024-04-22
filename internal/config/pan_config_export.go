@@ -33,7 +33,10 @@ func (c *PanConfig) SetProxy(proxy string) {
 // SetLocalAddrs 设置localAddrs
 func (c *PanConfig) SetLocalAddrs(localAddrs string) {
 	c.LocalAddrs = localAddrs
-	requester.SetLocalTCPAddrList(strings.Split(localAddrs, ",")...)
+	ips := ParseLocalAddress(localAddrs, strings.ToLower(c.PreferIPType))
+	if len(ips) > 0 {
+		requester.SetLocalTCPAddrList(ips...)
+	}
 }
 
 func (c *PanConfig) SetPreferIPType(ipType string) {
@@ -110,10 +113,9 @@ func (c *PanConfig) PrintTable() {
 		[]string{"max_upload_parallel", strconv.Itoa(c.MaxUploadParallel), "1 ~ 20", "最大上传并发量，即同时上传文件最大数量"},
 		[]string{"max_download_rate", showMaxRate(c.MaxDownloadRate), "", "限制单个文件最大下载速度, 0代表不限制"},
 		[]string{"max_upload_rate", showMaxRate(c.MaxUploadRate), "", "限制单个文件最大上传速度, 0代表不限制"},
-		[]string{"transfer_url_type", strconv.Itoa(c.TransferUrlType), "1-默认，2-阿里云ECS", "上传下载URL类别。除非在阿里云ECS（暂只支持经典网络）服务器中使用，不然请设置1"},
 		[]string{"savedir", c.SaveDir, "", "下载文件的储存目录"},
 		[]string{"proxy", c.Proxy, "", "设置代理, 支持 http/socks5 代理，例如: http://127.0.0.1:8888 或者 socks5://127.0.0.1:8889"},
-		[]string{"local_addrs", c.LocalAddrs, "", "设置本地网卡地址, 多个地址用逗号隔开，例如: 127.0.0.1,192.168.100.126"},
+		[]string{"local_addrs", c.LocalAddrs, "", "绑定本地网卡地址, 多个地址用逗号隔开，支持网口名称，例如: 127.0.0.1,192.168.100.126,en0,eth0"},
 		[]string{"ip_type", c.PreferIPType, "ipv4-优先IPv4，ipv6-优先IPv6", "设置域名解析IP优先类型。修改后需要重启应用生效"},
 		[]string{"file_record_config", fileRecorderLabel, "1-开启，2-禁用", "设置是否开启上传、下载、同步文件的结果记录，开启后会把结果记录到CSV文件方便后期查看"},
 		[]string{"device_id", c.DeviceId, "", "客户端ID，用于标识登录客户端，阿里单个账号最多允许10个客户端同时在线。修改后需要重启应用生效"},

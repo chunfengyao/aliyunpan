@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"github.com/tickstep/aliyunpan-api/aliyunpan"
 	"github.com/tickstep/aliyunpan-api/aliyunpan/apierror"
+	"github.com/tickstep/aliyunpan-api/aliyunpan_web"
 	"github.com/tickstep/aliyunpan/cmder"
 	"github.com/tickstep/aliyunpan/cmder/cmdtable"
 	"github.com/tickstep/aliyunpan/internal/config"
-	"github.com/tickstep/library-go/logger"
 	"github.com/urfave/cli"
 	"os"
 	"path"
@@ -51,19 +51,19 @@ func CmdShare() cli.Command {
 示例:
 
     创建文件 1.mp4 的分享链接 
-	aliyunpan share set 1.mp4
+	aliyunpan share set -mode 1 1.mp4
 
     创建 /我的视频/ 目录下所有mp4文件的分享链接，支持通配符
-	aliyunpan share set /我的视频/*.mp4
+	aliyunpan share set -mode 1 /我的视频/*.mp4
 
     创建文件 1.mp4 的分享链接，并指定分享密码为2333
-	aliyunpan share set -sharePwd 2333 1.mp4
+	aliyunpan share set -mode 1 -sharePwd 2333 1.mp4
 
     创建文件 1.mp4 的分享链接，并指定有效期为1天
-	aliyunpan share set -time 1 1.mp4
+	aliyunpan share set -mode 1 -time 1 1.mp4
 
     创建文件 1.mp4 的快传链接
-	aliyunpan share set -mode 3 1.mp4
+	aliyunpan share set 1.mp4
 `,
 				Action: func(c *cli.Context) error {
 					if c.NArg() < 1 {
@@ -72,6 +72,10 @@ func CmdShare() cli.Command {
 					}
 					if config.Config.ActiveUser() == nil {
 						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
 						return nil
 					}
 					et := ""
@@ -144,6 +148,14 @@ func CmdShare() cli.Command {
 				Usage:     "列出已分享文件/目录",
 				UsageText: cmder.App().Name + " share list",
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					RunShareList()
 					return nil
 				},
@@ -156,6 +168,14 @@ func CmdShare() cli.Command {
 				UsageText:   cmder.App().Name + " share cancel <shareid_1> <shareid_2> ...",
 				Description: `目前只支持通过分享id (shareid) 来取消分享.`,
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					if c.NArg() < 1 {
 						cli.ShowCommandHelp(c, c.Command.Name)
 						return nil
@@ -179,6 +199,14 @@ func CmdShare() cli.Command {
 	aliyunpan share export -option 2 "d:\myfoler\share_list.csv"
 `,
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					if c.NArg() < 1 {
 						cli.ShowCommandHelp(c, c.Command.Name)
 						return nil
@@ -199,51 +227,6 @@ func CmdShare() cli.Command {
 					},
 				},
 			},
-			//			{
-			//				Name:      "mc",
-			//				Aliases:   []string{},
-			//				Usage:     "创建秒传链接",
-			//				UsageText: cmder.App().Name + " share mc <文件/目录1> <文件/目录2> ...",
-			//				Description: `
-			//创建文件秒传链接，秒传链接只能是文件，如果是文件夹则会创建文件夹包含的所有文件的秒传链接。秒传链接可以通过RapidUpload命令或者Import命令进行导入到自己的网盘。
-			//示例:
-			//    创建文件 1.mp4 的秒传链接
-			//	aliyunpan share mc 1.mp4
-			//
-			//    创建文件 1.mp4 的秒传链接，但链接隐藏相对路径
-			//	aliyunpan share mc -hp 1.mp4
-			//
-			//    创建文件夹 share_folder 下面所有文件的秒传链接
-			//	aliyunpan share mc share_folder/
-			//`,
-			//				Action: func(c *cli.Context) error {
-			//					if c.NArg() < 1 {
-			//						cli.ShowCommandHelp(c, c.Command.Name)
-			//						return nil
-			//					}
-			//					if config.Config.ActiveUser() == nil {
-			//						fmt.Println("未登录账号")
-			//						return nil
-			//					}
-			//					hp := false
-			//					if c.IsSet("hp") {
-			//						hp = c.Bool("hp")
-			//					}
-			//					RunShareMc(parseDriveId(c), hp, c.Args())
-			//					return nil
-			//				},
-			//				Flags: []cli.Flag{
-			//					cli.StringFlag{
-			//						Name:  "driveId",
-			//						Usage: "网盘ID",
-			//						Value: "",
-			//					},
-			//					cli.BoolFlag{
-			//						Name:  "hp",
-			//						Usage: "hide path, 隐藏相对目录",
-			//					},
-			//				},
-			//			},
 		},
 	}
 }
@@ -286,7 +269,7 @@ func RunShareSet(modeFlag, driveId string, paths []string, expiredTime string, s
 
 	if modeFlag == "3" {
 		// 快传
-		r, err1 := panClient.FastShareLinkCreate(aliyunpan.FastShareCreateParam{
+		r, err1 := panClient.WebapiPanClient().FastShareLinkCreate(aliyunpan_web.FastShareCreateParam{
 			DriveId:    driveId,
 			FileIdList: fidList,
 		})
@@ -303,7 +286,7 @@ func RunShareSet(modeFlag, driveId string, paths []string, expiredTime string, s
 		fmt.Printf("链接：%s\n", r.ShareUrl)
 	} else {
 		// 分享
-		r, err1 := panClient.ShareLinkCreate(aliyunpan.ShareCreateParam{
+		r, err1 := panClient.WebapiPanClient().ShareLinkCreate(aliyunpan_web.ShareCreateParam{
 			DriveId:    driveId,
 			SharePwd:   sharePwd,
 			Expiration: expiredTime,
@@ -330,7 +313,7 @@ func RunShareSet(modeFlag, driveId string, paths []string, expiredTime string, s
 // RunShareList 执行列出分享列表
 func RunShareList() {
 	activeUser := GetActiveUser()
-	records, err := activeUser.PanClient().ShareLinkList(activeUser.UserId)
+	records, err := activeUser.PanClient().WebapiPanClient().ShareLinkList(activeUser.UserId)
 	if err != nil {
 		fmt.Printf("获取分享列表失败: %s\n", err)
 		return
@@ -378,7 +361,7 @@ func RunShareCancel(shareIdList []string) {
 	}
 
 	activeUser := GetActiveUser()
-	r, err := activeUser.PanClient().ShareLinkCancel(shareIdList)
+	r, err := activeUser.PanClient().WebapiPanClient().ShareLinkCancel(shareIdList)
 	if err != nil {
 		fmt.Printf("取消分享操作失败: %s\n", err)
 		return
@@ -393,7 +376,7 @@ func RunShareCancel(shareIdList []string) {
 
 func RunShareExport(option, saveFilePath string) {
 	activeUser := GetActiveUser()
-	records, err := activeUser.PanClient().ShareLinkList(activeUser.UserId)
+	records, err := activeUser.PanClient().WebapiPanClient().ShareLinkList(activeUser.UserId)
 	if err != nil {
 		fmt.Printf("获取分享列表失败: %s\n", err)
 		return
@@ -457,37 +440,4 @@ func ExportCsv(savePath string, data [][]string) bool {
 	w.WriteAll(data)
 	w.Flush()
 	return true
-}
-
-// 创建秒传链接
-func RunShareMc(driveId string, hideRelativePath bool, panPaths []string) {
-	activeUser := config.Config.ActiveUser()
-	panClient := activeUser.PanClient()
-
-	totalCount := 0
-	for _, panPath := range panPaths {
-		panPath = activeUser.PathJoin(driveId, panPath)
-		panClient.FilesDirectoriesRecurseList(driveId, panPath, func(depth int, _ string, fd *aliyunpan.FileEntity, apiError *apierror.ApiError) bool {
-			if apiError != nil {
-				logger.Verbosef("%s\n", apiError)
-				return true
-			}
-
-			// 只需要文件即可
-			if !fd.IsFolder() {
-				item := newRapidUploadItemFromFileEntity(fd)
-				jstr := item.createRapidUploadLink(hideRelativePath)
-				if len(jstr) <= 0 {
-					logger.Verboseln("create rapid upload link err")
-					return false
-				}
-				// print
-				fmt.Println(jstr)
-				totalCount += 1
-				time.Sleep(time.Duration(100) * time.Millisecond)
-			}
-			return true
-		})
-	}
-	fmt.Printf("\n秒传链接总数量: %d\n", totalCount)
 }

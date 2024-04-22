@@ -16,6 +16,7 @@ package command
 import (
 	"fmt"
 	"github.com/tickstep/aliyunpan-api/aliyunpan"
+	"github.com/tickstep/aliyunpan-api/aliyunpan_web"
 	"github.com/tickstep/aliyunpan/cmder/cmdtable"
 	"github.com/tickstep/aliyunpan/internal/config"
 	"github.com/urfave/cli"
@@ -53,6 +54,10 @@ func CmdXcp() cli.Command {
 			}
 			if config.Config.ActiveUser() == nil {
 				fmt.Println("未登录账号")
+				return nil
+			}
+			if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+				fmt.Println("WEB客户端未登录，请登录后再使用该命令")
 				return nil
 			}
 			srcDriveId := parseDriveId(c)
@@ -106,7 +111,7 @@ func RunXCopy(srcDriveId, dstDriveId string, paths ...string) {
 		copyFileParamList = append(copyFileParamList, mfi.FileId)
 		cacheCleanPaths = append(cacheCleanPaths, path.Dir(mfi.Path))
 	}
-	fccr, er := activeUser.PanClient().FileCrossDriveCopy(&aliyunpan.FileCrossCopyParam{
+	fccr, er := activeUser.PanClient().WebapiPanClient().FileCrossDriveCopy(&aliyunpan_web.FileCrossCopyParam{
 		FromDriveId:    srcDriveId,
 		FromFileIds:    copyFileParamList,
 		ToDriveId:      dstDriveId,
@@ -151,7 +156,7 @@ func getCrossCopyFileInfo(srcDriveId, dstDriveId string, paths ...string) (opFil
 	// the last one is the target file path
 	targetFilePath := path.Clean(paths[len(paths)-1])
 	absolutePath := activeUser.PathJoin(dstDriveId, targetFilePath)
-	targetFile, err := activeUser.PanClient().FileInfoByPath(dstDriveId, absolutePath)
+	targetFile, err := activeUser.PanClient().WebapiPanClient().FileInfoByPath(dstDriveId, absolutePath)
 	if err != nil || !targetFile.IsFolder() {
 		return nil, nil, nil, fmt.Errorf("指定目标文件夹不存在")
 	}

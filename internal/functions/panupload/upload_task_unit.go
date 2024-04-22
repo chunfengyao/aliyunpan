@@ -39,6 +39,11 @@ import (
 	"github.com/tickstep/library-go/requester/rio"
 )
 
+const (
+	// DefaultCheckPreHashFileSize PreHash计算文件大小门限，默认100MB以上文件才计算
+	DefaultCheckPreHashFileSize = 100 * 1024 * 1024
+)
+
 type (
 	// StepUpload 上传步骤
 	StepUpload int
@@ -51,7 +56,7 @@ type (
 		DriveId           string // 网盘ID，例如：文件网盘，相册网盘
 		FolderCreateMutex *sync.Mutex
 
-		PanClient         *aliyunpan.PanClient
+		PanClient         *config.PanClient
 		UploadingDatabase *UploadingDatabase // 数据库
 		Parallel          int
 		NoRapidUpload     bool  // 禁用秒传，无需计算SHA1，直接上传
@@ -68,9 +73,6 @@ type (
 		IsOverwrite    bool // 覆盖已存在的文件，如果同名文件已存在则移到回收站里
 		IsSkipSameName bool // 跳过已存在的文件，即使文件内容不一致(不检查SHA1)
 
-		// 是否使用内置链接
-		UseInternalUrl bool
-
 		// 全局速度统计
 		GlobalSpeedsStat *speeds.Speeds
 
@@ -82,7 +84,7 @@ type (
 const (
 	// StepUploadInit 初始化步骤
 	StepUploadInit StepUpload = iota
-	// 上传前准备，创建上传任务
+	// StepUploadPrepareUpload 上传前准备，创建上传任务
 	StepUploadPrepareUpload
 	// StepUploadRapidUpload 秒传步骤
 	StepUploadRapidUpload
@@ -98,7 +100,7 @@ func (utu *UploadTaskUnit) SetTaskInfo(taskInfo *taskframework.TaskInfo) {
 	utu.taskInfo = taskInfo
 }
 
-// prepareFile 解析文件阶段
+// prepareFile 解析文件准备阶段
 func (utu *UploadTaskUnit) prepareFile() {
 	// 解析文件保存路径
 	var (
@@ -128,6 +130,7 @@ func (utu *UploadTaskUnit) prepareFile() {
 	//	utu.Step = StepUploadUpload
 	//	return
 	//}
+
 	// 下一步: 秒传
 	utu.Step = StepUploadRapidUpload
 }
@@ -159,7 +162,7 @@ func (utu *UploadTaskUnit) upload() (result *taskframework.TaskUnitRunResult) {
 	// 阿里云盘默认就是分片上传，每一个分片对应一个part_info
 	// 但是不支持分片同时上传，必须单线程，并且按照顺序从1开始一个一个上传
 	muer := uploader.NewMultiUploader(
-		NewPanUpload(utu.PanClient, utu.SavePath, utu.DriveId, utu.LocalFileChecksum.UploadOpEntity, utu.UseInternalUrl),
+		NewPanUpload(utu.PanClient, utu.SavePath, utu.DriveId, utu.LocalFileChecksum.UploadOpEntity),
 		rio.NewFileReaderAtLen64(utu.LocalFileChecksum.GetFile()), &uploader.MultiUploaderConfig{
 			Parallel:  utu.Parallel,
 			BlockSize: utu.BlockSize,
@@ -322,6 +325,7 @@ func (utu *UploadTaskUnit) Run() (result *taskframework.TaskUnitRunResult) {
 		}
 		fmt.Printf("[%s] %s 文件上传结果： %s 耗时 %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), msg, utils.ConvertTime(time.Now().Sub(timeStart)))
 	}()
+
 	// 准备文件
 	utu.prepareFile()
 	logger.Verbosef("[%s] %s 准备结束, 准备耗时 %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), utils.ConvertTime(time.Now().Sub(timeStart)))
@@ -356,7 +360,7 @@ StepUploadPrepareUpload:
 	if saveFilePath != "/" {
 		utu.FolderCreateMutex.Lock()
 		fmt.Printf("[%s] %s 正在检测和创建云盘文件夹: %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), saveFilePath)
-		fe, apierr1 := utu.PanClient.FileInfoByPath(utu.DriveId, saveFilePath)
+		fe, apierr1 := utu.PanClient.OpenapiPanClient().FileInfoByPath(utu.DriveId, saveFilePath)
 		time.Sleep(1 * time.Second)
 		needToCreateFolder := false
 		if apierr1 != nil && apierr1.Code == apierror.ApiCodeFileNotFoundCode {
@@ -371,16 +375,7 @@ StepUploadPrepareUpload:
 		}
 		if needToCreateFolder {
 			logger.Verbosef("[%s] %s 创建云盘文件夹: %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), saveFilePath)
-			rs, apierr = utu.PanClient.Mkdir(utu.DriveId, "root", saveFilePath)
-			if apierr != nil && apierr.Code == apierror.ApiCodeDeviceSessionSignatureInvalid {
-				_, e := utu.PanClient.CreateSession(nil)
-				if e == nil {
-					// retry
-					rs, apierr = utu.PanClient.Mkdir(utu.DriveId, "root", saveFilePath)
-				} else {
-					logger.Verboseln("CreateSession failed")
-				}
-			}
+			rs, apierr = utu.PanClient.OpenapiPanClient().MkdirByFullPath(utu.DriveId, saveFilePath)
 			if apierr != nil || rs.FileId == "" {
 				result.Err = apierr
 				result.ResultMessage = "创建云盘文件夹失败"
@@ -402,7 +397,7 @@ StepUploadPrepareUpload:
 	checkNameMode = "auto_rename"
 	// 如果启用了 覆盖/跳过 已存在的文件,则需要提前检查文件是否存在
 	if utu.IsOverwrite || utu.IsSkipSameName {
-		efi, apierr = utu.PanClient.FileInfoByPath(utu.DriveId, utu.SavePath)
+		efi, apierr = utu.PanClient.OpenapiPanClient().FileInfoByPath(utu.DriveId, utu.SavePath)
 		if apierr != nil && apierr.Code != apierror.ApiCodeFileNotFoundCode {
 			result.Err = apierr
 			result.ResultMessage = "检测同名文件失败"
@@ -418,22 +413,49 @@ StepUploadPrepareUpload:
 		}
 	}
 	if !utu.NoRapidUpload {
-		// 计算文件SHA1
-		fmt.Printf("[%s] %s 正在计算文件SHA1: %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), utu.LocalFileChecksum.Path.LogicPath)
-		utu.LocalFileChecksum.Sum(localfile.CHECKSUM_SHA1)
-		sha1Str = utu.LocalFileChecksum.SHA1
-		if utu.LocalFileChecksum.Length == 0 {
-			sha1Str = aliyunpan.DefaultZeroSizeFileContentHash
+		// 正常上传流程，检测是否能秒传
+		preHashMatch := true
+		if utu.LocalFileChecksum.Length >= DefaultCheckPreHashFileSize {
+			// 大文件，先计算 PreHash，用于检测是否可能支持秒传
+			preHash := CalcFilePreHash(utu.LocalFileChecksum.Path.RealPath)
+			if len(preHash) > 0 {
+				if b, er := utu.PanClient.OpenapiPanClient().CheckUploadFilePreHash(&aliyunpan.FileUploadCheckPreHashParam{
+					DriveId:      utu.DriveId,
+					Name:         filepath.Base(utu.SavePath),
+					Size:         utu.LocalFileChecksum.Length,
+					ParentFileId: rs.FileId,
+					PreHash:      preHash,
+				}); er == nil {
+					preHashMatch = b
+				}
+			}
 		}
 
-		// proof code
-		localFile, _ = os.Open(utu.LocalFileChecksum.Path.RealPath)
-		localFileInfo, _ = localFile.Stat()
-		proofCode = aliyunpan.CalcProofCode(utu.PanClient.GetAccessToken(), rio.NewFileReaderAtLen64(localFile), localFileInfo.Size())
-		localFile.Close()
+		if preHashMatch {
+			// 计算完整文件SHA1
+			fmt.Printf("[%s] %s 正在计算文件SHA1: %s\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"), utu.LocalFileChecksum.Path.LogicPath)
+			utu.LocalFileChecksum.Sum(localfile.CHECKSUM_SHA1)
+			sha1Str = utu.LocalFileChecksum.SHA1
+			if utu.LocalFileChecksum.Length == 0 {
+				sha1Str = aliyunpan.DefaultZeroSizeFileContentHash
+			}
+
+			// proof code
+			localFile, _ = os.Open(utu.LocalFileChecksum.Path.RealPath)
+			localFileInfo, _ = localFile.Stat()
+			proofCode = aliyunpan.CalcProofCode(utu.PanClient.OpenapiPanClient().GetAccessToken(), rio.NewFileReaderAtLen64(localFile), localFileInfo.Size())
+			localFile.Close()
+		} else {
+			// 无需计算 sha1，直接上传
+			logger.Verboseln("PreHash not match, upload file directly")
+			sha1Str = ""
+			contentHashName = ""
+			checkNameMode = "auto_rename"
+		}
 	} else {
 		fmt.Printf("[%s] %s 已经禁用秒传检测，直接上传\n", utu.taskInfo.Id(), time.Now().Format("2006-01-02 15:04:06"))
-		contentHashName = "none"
+		sha1Str = ""
+		contentHashName = ""
 		checkNameMode = "auto_rename"
 	}
 
@@ -448,10 +470,10 @@ StepUploadPrepareUpload:
 				return
 			}
 			// existed, delete it
-			var fileDeleteResult []*aliyunpan.FileBatchActionResult
+			var fileDeleteResult *aliyunpan.FileBatchActionResult
 			var err *apierror.ApiError
-			fileDeleteResult, err = utu.PanClient.FileDelete([]*aliyunpan.FileBatchActionParam{{DriveId: efi.DriveId, FileId: efi.FileId}})
-			if err != nil || len(fileDeleteResult) == 0 {
+			fileDeleteResult, err = utu.PanClient.OpenapiPanClient().FileDelete(&aliyunpan.FileBatchActionParam{DriveId: efi.DriveId, FileId: efi.FileId})
+			if err != nil || !fileDeleteResult.Success {
 				result.Err = err
 				result.ResultMessage = "无法删除文件，请稍后重试"
 				return
@@ -469,29 +491,33 @@ StepUploadPrepareUpload:
 	}
 
 	// 创建上传任务
-	appCreateUploadFileParam = &aliyunpan.CreateFileUploadParam{
-		DriveId:         utu.DriveId,
-		Name:            filepath.Base(utu.SavePath),
-		Size:            utu.LocalFileChecksum.Length,
-		ContentHash:     sha1Str,
-		ContentHashName: contentHashName,
-		CheckNameMode:   checkNameMode,
-		ParentFileId:    rs.FileId,
-		BlockSize:       utu.BlockSize,
-		ProofCode:       proofCode,
-		ProofVersion:    "v1",
-	}
-
-	uploadOpEntity, apierr = utu.PanClient.CreateUploadFile(appCreateUploadFileParam)
-	if apierr != nil && apierr.Code == apierror.ApiCodeDeviceSessionSignatureInvalid {
-		_, e := utu.PanClient.CreateSession(nil)
-		if e == nil {
-			// retry
-			uploadOpEntity, apierr = utu.PanClient.CreateUploadFile(appCreateUploadFileParam)
-		} else {
-			logger.Verboseln("CreateSession failed")
+	if sha1Str != "" {
+		// 计算SHA1和ProofCode，该方式支持秒传文件
+		appCreateUploadFileParam = &aliyunpan.CreateFileUploadParam{
+			DriveId:         utu.DriveId,
+			Name:            filepath.Base(utu.SavePath),
+			Size:            utu.LocalFileChecksum.Length,
+			CheckNameMode:   checkNameMode,
+			ParentFileId:    rs.FileId,
+			BlockSize:       utu.BlockSize,
+			ContentHash:     sha1Str,
+			ContentHashName: contentHashName,
+			ProofCode:       proofCode,
+			ProofVersion:    "v1",
+		}
+	} else {
+		// 不支持秒传，不计算SHA1，直接上传文件
+		appCreateUploadFileParam = &aliyunpan.CreateFileUploadParam{
+			DriveId:       utu.DriveId,
+			Name:          filepath.Base(utu.SavePath),
+			Size:          utu.LocalFileChecksum.Length,
+			CheckNameMode: checkNameMode,
+			ParentFileId:  rs.FileId,
+			BlockSize:     utu.BlockSize,
 		}
 	}
+
+	uploadOpEntity, apierr = utu.PanClient.OpenapiPanClient().CreateUploadFile(appCreateUploadFileParam)
 	if apierr != nil {
 		result.Err = apierr
 		result.ResultMessage = "创建上传任务失败：" + apierr.Error()

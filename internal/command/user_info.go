@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +15,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/tickstep/aliyunpan-api/aliyunpan"
 	"github.com/tickstep/aliyunpan/cmder"
 	"github.com/tickstep/aliyunpan/internal/config"
 	"github.com/urfave/cli"
@@ -47,7 +46,7 @@ func CmdSu() cli.Command {
 
 	示例:
 	aliyunpan su
-	aliyunpan su <uid or name>
+	aliyunpan su <uid>
 `,
 		Category: "阿里云盘账号",
 		Before:   ReloadConfigFunc,
@@ -95,7 +94,7 @@ func CmdSu() cli.Command {
 				cli.ShowCommandHelp(c, c.Command.Name)
 			}
 
-			switchedUser, err := config.Config.SwitchUser(uid, inputData)
+			switchedUser, err := config.Config.SwitchUser(uid)
 			if err != nil {
 				fmt.Printf("切换用户失败, %s\n", err)
 				return nil
@@ -130,12 +129,8 @@ func CmdWho() cli.Command {
 			}
 			activeUser := config.Config.ActiveUser()
 			cloudName := activeUser.GetDriveById(activeUser.ActiveDriveId).DriveName
-			fmt.Printf("当前帐号UID: %s, 昵称: %s, 用户名: %s, 网盘：%s\n", activeUser.UserId, activeUser.Nickname, activeUser.AccountName, cloudName)
+			fmt.Printf("当前帐号UID: %s, 昵称: %s, 用户名: %s, 当前使用网盘：%s\n", activeUser.UserId, activeUser.Nickname, activeUser.AccountName, cloudName)
 			return nil
 		},
 	}
-}
-
-func RunGetUserInfo() (userInfo *aliyunpan.UserInfo, error error) {
-	return GetActivePanClient().GetUserInfo()
 }

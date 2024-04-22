@@ -3,13 +3,13 @@ package syncdrive
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/tickstep/aliyunpan-api/aliyunpan"
 	"github.com/tickstep/aliyunpan/internal/config"
 	"github.com/tickstep/aliyunpan/internal/log"
 	"github.com/tickstep/aliyunpan/internal/utils"
 	"github.com/tickstep/library-go/logger"
 	"io/ioutil"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -20,7 +20,6 @@ type (
 		FileUploadParallel    int   // 文件上传并发数
 		FileDownloadBlockSize int64 // 文件下载分片大小
 		FileUploadBlockSize   int64 // 文件上传分片大小
-		UseInternalUrl        bool  // 是否使用阿里ECS内部链接
 
 		MaxDownloadRate int64 // 限制最大下载速度
 		MaxUploadRate   int64 // 限制最大上传速度
@@ -40,8 +39,7 @@ type (
 		syncDriveConfig      *SyncDriveConfig
 		syncOption           SyncOption
 		PanUser              *config.PanUser
-		DriveId              string
-		PanClient            *aliyunpan.PanClient
+		PanClient            *config.PanClient
 		SyncConfigFolderPath string
 
 		// useConfigFile 是否使用配置文件启动
@@ -59,11 +57,10 @@ var (
 	ErrSyncTaskListEmpty error = fmt.Errorf("no sync task")
 )
 
-func NewSyncTaskManager(user *config.PanUser, driveId string, panClient *aliyunpan.PanClient, syncConfigFolderPath string,
+func NewSyncTaskManager(user *config.PanUser, panClient *config.PanClient, syncConfigFolderPath string,
 	option SyncOption) *SyncTaskManager {
 	return &SyncTaskManager{
 		PanUser:              user,
-		DriveId:              driveId,
 		PanClient:            panClient,
 		SyncConfigFolderPath: syncConfigFolderPath,
 		syncOption:           option,
@@ -82,6 +79,7 @@ func (m *SyncTaskManager) parseConfigFile() error {
 	   "localFolderPath": "D:\\smb\\datadisk\\game",
 	   "panFolderPath": "/sync_drive/game",
 	   "mode": "sync",
+	   "driveName": "backup",
 	   "lastSyncTime": ""
 	  }
 	 ]
@@ -118,7 +116,7 @@ func (m *SyncTaskManager) ConfigFilePath() string {
 }
 
 // Start 启动同步进程
-func (m *SyncTaskManager) Start(tasks []*SyncTask, step TaskStep) (bool, error) {
+func (m *SyncTaskManager) Start(tasks []*SyncTask, cycleMode CycleMode) (bool, error) {
 	if tasks != nil && len(tasks) > 0 {
 		m.syncDriveConfig = &SyncDriveConfig{
 			ConfigVer:    "1.0",
@@ -141,6 +139,19 @@ func (m *SyncTaskManager) Start(tasks []*SyncTask, step TaskStep) (bool, error) 
 		if len(task.Id) == 0 {
 			task.Id = utils.UuidStr()
 		}
+		// cycle mode
+		task.CycleModeType = cycleMode
+
+		// check driveId
+		if strings.ToLower(task.DriveName) == "backup" {
+			task.DriveId = m.PanUser.DriveList.GetFileDriveId()
+		} else if strings.ToLower(task.DriveName) == "resource" {
+			task.DriveId = m.PanUser.DriveList.GetResourceDriveId()
+		}
+		if len(task.DriveId) == 0 {
+			task.DriveId = m.PanUser.DriveList.GetFileDriveId()
+		}
+
 		// check userId
 		if len(task.UserId) > 0 {
 			if task.UserId != m.PanUser.UserId {
@@ -163,7 +174,6 @@ func (m *SyncTaskManager) Start(tasks []*SyncTask, step TaskStep) (bool, error) 
 			continue
 		}
 		task.panUser = m.PanUser
-		task.DriveId = m.DriveId
 		task.syncDbFolderPath = m.SyncConfigFolderPath
 		task.panClient = m.PanClient
 		task.syncOption = m.syncOption
@@ -173,9 +183,12 @@ func (m *SyncTaskManager) Start(tasks []*SyncTask, step TaskStep) (bool, error) 
 			task.Priority = SyncPriorityTimestampFirst
 			task.syncOption.SyncPriority = SyncPriorityTimestampFirst
 		}
+		if task.Policy == "" {
+			task.Policy = SyncPolicyIncrement
+		}
 		task.LocalFolderPath = path.Clean(task.LocalFolderPath)
 		task.PanFolderPath = path.Clean(task.PanFolderPath)
-		if e := task.Start(step); e != nil {
+		if e := task.Start(); e != nil {
 			logger.Verboseln(e)
 			fmt.Printf("启动同步任务[%s]出错: %s\n", task.Id, e.Error())
 			continue
@@ -192,16 +205,11 @@ func (m *SyncTaskManager) Start(tasks []*SyncTask, step TaskStep) (bool, error) 
 }
 
 // Stop 停止同步进程
-func (m *SyncTaskManager) Stop(step TaskStep) (bool, error) {
+func (m *SyncTaskManager) Stop() (bool, error) {
 	// stop task one by one
 	for _, task := range m.syncDriveConfig.SyncTaskList {
 		var e error
-		if step == StepScanFile {
-			e = task.WaitToStop() // 阻塞直到停止
-		} else {
-			e = task.Stop()
-		}
-
+		e = task.Stop()
 		if e != nil {
 			logger.Verboseln(e)
 			fmt.Println("stop sync task error: ", task.NameLabel())
@@ -215,4 +223,13 @@ func (m *SyncTaskManager) Stop(step TaskStep) (bool, error) {
 		ioutil.WriteFile(m.ConfigFilePath(), []byte(utils.ObjectToJsonStr(m.syncDriveConfig, true)), 0755)
 	}
 	return true, nil
+}
+
+func (m *SyncTaskManager) IsAllTaskCompletely() bool {
+	for _, task := range m.syncDriveConfig.SyncTaskList {
+		if !task.IsTaskCompletely() {
+			return false
+		}
+	}
+	return true
 }

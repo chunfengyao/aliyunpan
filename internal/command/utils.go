@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,8 +16,7 @@ package command
 import (
 	"fmt"
 	"github.com/tickstep/aliyunpan-api/aliyunpan"
-	"github.com/tickstep/aliyunpan-api/aliyunpan/apierror"
-	"github.com/tickstep/aliyunpan/cmder/cmdliner"
+	"github.com/tickstep/aliyunpan-api/aliyunpan_web"
 	"github.com/tickstep/aliyunpan/internal/config"
 	"github.com/tickstep/aliyunpan/internal/functions/panlogin"
 	"github.com/tickstep/aliyunpan/internal/plugins"
@@ -60,7 +59,7 @@ var (
 // RunTestShellPattern 执行测试通配符
 func RunTestShellPattern(driveId string, pattern string) {
 	acUser := GetActiveUser()
-	files, err := acUser.PanClient().MatchPathByShellPattern(driveId, GetActiveUser().PathJoin(driveId, pattern))
+	files, err := acUser.PanClient().OpenapiPanClient().MatchPathByShellPattern(driveId, GetActiveUser().PathJoin(driveId, pattern))
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -75,7 +74,7 @@ func RunTestShellPattern(driveId string, pattern string) {
 func matchPathByShellPattern(driveId string, patterns ...string) (files []*aliyunpan.FileEntity, e error) {
 	acUser := GetActiveUser()
 	for k := range patterns {
-		ps, err := acUser.PanClient().MatchPathByShellPattern(driveId, acUser.PathJoin(driveId, patterns[k]))
+		ps, err := acUser.PanClient().OpenapiPanClient().MatchPathByShellPattern(driveId, acUser.PathJoin(driveId, patterns[k]))
 		if err != nil {
 			return nil, err
 		}
@@ -128,39 +127,62 @@ func UnescapeStr(s string) string {
 	return r
 }
 
-// RefreshTokenInNeed 刷新refresh token
-func RefreshTokenInNeed(activeUser *config.PanUser, deviceName string) bool {
+func NewWebLoginToken(accessToken string, expired int64) aliyunpan_web.WebLoginToken {
+	webapiToken := &config.PanClientToken{
+		AccessToken: accessToken,
+		Expired:     expired,
+	}
+	return aliyunpan_web.WebLoginToken{
+		AccessTokenType: "Bearer",
+		AccessToken:     webapiToken.AccessToken,
+		RefreshToken:    "",
+		ExpiresIn:       7200,
+		ExpireTime:      webapiToken.GetExpiredTimeCstStr(),
+	}
+}
+
+// RefreshWebTokenInNeed 刷新 webapi access token
+func RefreshWebTokenInNeed(activeUser *config.PanUser, deviceName string) bool {
 	if activeUser == nil {
 		return false
 	}
 
-	// refresh expired token
-	if activeUser.PanClient() != nil {
-		if len(activeUser.WebToken.RefreshToken) > 0 {
+	// refresh expired web token
+	if activeUser.PanClient().WebapiPanClient() != nil {
+		if activeUser.WebapiToken != nil && len(activeUser.WebapiToken.AccessToken) > 0 {
 			cz := time.FixedZone("CST", 8*3600) // 东8区
-			expiredTime, _ := time.ParseInLocation("2006-01-02 15:04:05", activeUser.WebToken.ExpireTime, cz)
+			expiredTime := time.Unix(activeUser.WebapiToken.Expired, 0).In(cz)
 			now := time.Now()
-			if (expiredTime.Unix() - now.Unix()) <= (20 * 60) { // 20min
+			if (expiredTime.Unix() - now.Unix()) <= (2 * 60) { // 有效期小于2min就刷新
 				pluginManger := plugins.NewPluginManager(config.GetPluginDir())
 				plugin, _ := pluginManger.GetPlugin()
 				params := &plugins.UserTokenRefreshFinishParams{
 					Result:    "success",
-					Message:   "",
+					Message:   "webapi",
 					OldToken:  "",
 					NewToken:  "",
 					UpdatedAt: utils.NowTimeStr(),
 				}
 
 				// need update refresh token
-				logger.Verboseln("access token expired, get new from refresh token")
-				if wt, er := aliyunpan.GetAccessTokenFromRefreshToken(activeUser.RefreshToken); er == nil {
+				logger.Verboseln("web access token expired, get new from server")
+				loginHelper := panlogin.NewLoginHelper(config.DefaultTokenServiceWebHost)
+				wt, e := loginHelper.GetWebapiNewToken(activeUser.TicketId, activeUser.UserId, activeUser.PanClient().WebapiPanClient().GetAccessToken())
+				if e != nil {
+					logger.Verboseln("get web token from server error: ", e)
+				}
+				if wt != nil {
 					params.Result = "success"
-					params.OldToken = activeUser.RefreshToken
-					params.NewToken = wt.RefreshToken
+					params.OldToken = activeUser.WebapiToken.AccessToken
+					params.NewToken = wt.AccessToken
 
-					activeUser.RefreshToken = wt.RefreshToken
-					activeUser.WebToken = *wt
-					activeUser.PanClient().UpdateToken(*wt)
+					// update for user & client
+					userWebToken := NewWebLoginToken(wt.AccessToken, wt.Expired)
+					activeUser.WebapiToken = &config.PanClientToken{
+						AccessToken: wt.AccessToken,
+						Expired:     wt.Expired,
+					}
+					activeUser.PanClient().WebapiPanClient().UpdateToken(userWebToken)
 					logger.Verboseln("get new access token success")
 
 					// plugin callback
@@ -169,9 +191,9 @@ func RefreshTokenInNeed(activeUser *config.PanUser, deviceName string) bool {
 					}
 
 					// create new signature
-					_, e := activeUser.PanClient().CreateSession(nil)
+					_, e := activeUser.PanClient().WebapiPanClient().CreateSession(nil)
 					if e != nil {
-						logger.Verboseln("call CreateSession error in RefreshTokenInNeed: " + e.Error())
+						logger.Verboseln("call CreateSession error in RefreshWebTokenInNeed: " + e.Error())
 					}
 					return true
 				} else {
@@ -179,8 +201,74 @@ func RefreshTokenInNeed(activeUser *config.PanUser, deviceName string) bool {
 					// if token has expired, callback plugin api for notify
 					if now.Unix() >= expiredTime.Unix() {
 						params.Result = "fail"
-						params.Message = er.Error()
-						params.OldToken = activeUser.RefreshToken
+						params.Message = e.Error()
+						params.OldToken = activeUser.WebapiToken.AccessToken
+						if er1 := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(activeUser), params); er1 != nil {
+							logger.Verbosef("UserTokenRefreshFinishCallback error: " + er1.Error())
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// RefreshOpenTokenInNeed 刷新 openapi access token
+func RefreshOpenTokenInNeed(activeUser *config.PanUser) bool {
+	if activeUser == nil {
+		return false
+	}
+
+	// refresh expired openapi token
+	if activeUser.PanClient().OpenapiPanClient() != nil {
+		if activeUser.OpenapiToken != nil && len(activeUser.OpenapiToken.AccessToken) > 0 {
+			cz := time.FixedZone("CST", 8*3600) // 东8区
+			expiredTime := time.Unix(activeUser.OpenapiToken.Expired, 0).In(cz)
+			now := time.Now().In(cz)
+			if (expiredTime.Unix() - now.Unix()) <= (2 * 60) { // 有效期小于2min就刷新
+				pluginManger := plugins.NewPluginManager(config.GetPluginDir())
+				plugin, _ := pluginManger.GetPlugin()
+				params := &plugins.UserTokenRefreshFinishParams{
+					Result:    "success",
+					Message:   "openapi",
+					OldToken:  "",
+					NewToken:  "",
+					UpdatedAt: utils.NowTimeStr(),
+				}
+
+				// need update refresh token
+				logger.Verboseln("openapi access token expired, get new from server")
+				loginHelper := panlogin.NewLoginHelper(config.DefaultTokenServiceWebHost)
+				wt, e := loginHelper.GetOpenapiNewToken(activeUser.TicketId, activeUser.UserId, activeUser.PanClient().OpenapiPanClient().GetAccessToken())
+				if e != nil {
+					logger.Verboseln("get openapi token from server error: ", e)
+				}
+				if wt != nil {
+					params.Result = "success"
+					params.OldToken = activeUser.OpenapiToken.AccessToken
+					params.NewToken = wt.AccessToken
+
+					// update for user
+					activeUser.OpenapiToken = &config.PanClientToken{
+						AccessToken: wt.AccessToken,
+						Expired:     wt.Expired,
+					}
+					logger.Verboseln("get new access token success")
+
+					// plugin callback
+					if er1 := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(activeUser), params); er1 != nil {
+						logger.Verbosef("UserTokenRefreshFinishCallback error: " + er1.Error())
+					}
+
+					return true
+				} else {
+					// token refresh error
+					// if token has expired, callback plugin api for notify
+					if now.Unix() >= expiredTime.Unix() {
+						params.Result = "fail"
+						params.Message = e.Error()
+						params.OldToken = activeUser.WebapiToken.AccessToken
 						if er1 := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(activeUser), params); er1 != nil {
 							logger.Verbosef("UserTokenRefreshFinishCallback error: " + er1.Error())
 						}
@@ -205,109 +293,26 @@ func isMatchWildcardPattern(name string) bool {
 	return strings.ContainsAny(name, "*") || strings.ContainsAny(name, "?") || strings.ContainsAny(name, "[")
 }
 
-// DoLoginHelper 登录助手，使用token进行登录
-func DoLoginHelper(refreshToken string) (refreshTokenStr string, webToken aliyunpan.WebLoginToken, error error) {
-	line := cmdliner.NewLiner()
-	defer line.Close()
-
-	if refreshToken == "" {
-		refreshToken, error = line.State.Prompt("请输入RefreshToken, 回车键提交 > ")
-		if error != nil {
-			return
-		}
-	}
-
-	// app login
-	atoken, apperr := aliyunpan.GetAccessTokenFromRefreshToken(refreshToken)
-	if apperr != nil {
-		if apperr.Code == apierror.ApiCodeTokenExpiredCode || apperr.Code == apierror.ApiCodeRefreshTokenExpiredCode {
-			fmt.Println("Token过期，需要重新登录")
-		} else {
-			fmt.Println("Token登录失败：", apperr)
-		}
-		return "", webToken, fmt.Errorf("登录失败")
-	}
-	refreshTokenStr = refreshToken
-	return refreshTokenStr, *atoken, nil
-}
-
 // TryLogin 尝试登录，基础应用支持的各类登录方式进行尝试成功登录
 func TryLogin() *config.PanUser {
-	// 获取当前插件
-	pluginManger := plugins.NewPluginManager(config.GetPluginDir())
-	plugin, _ := pluginManger.GetPlugin()
-	params := &plugins.UserTokenRefreshFinishParams{
-		Result:    "success",
-		Message:   "",
-		OldToken:  "",
-		NewToken:  "",
-		UpdatedAt: utils.NowTimeStr(),
-	}
-
 	// can do automatically login?
 	for _, u := range config.Config.UserList {
 		if u.UserId == config.Config.ActiveUID {
 			// login
-			_, webToken, err := DoLoginHelper(u.RefreshToken)
-			if err != nil {
-				logger.Verboseln("automatically login use saved refresh token error ", err)
-				if u.TokenId != "" {
-					logger.Verboseln("try to login use tokenId")
-					h := panlogin.NewLoginHelper(config.DefaultTokenServiceWebHost)
-					r, e := h.GetRefreshToken(u.TokenId)
-					if e != nil {
-						logger.Verboseln("try to login use tokenId error", e)
-						// login fail plugin callback
-						params.Result = "fail"
-						params.OldToken = u.RefreshToken
-						params.NewToken = ""
-						if er := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(u), params); er != nil {
-							logger.Verbosef("UserTokenRefreshFinishCallback error: " + er.Error())
-						}
-						break
-					}
-					refreshToken, e := h.ParseSecureRefreshToken("", r.SecureRefreshToken)
-					if e != nil {
-						logger.Verboseln("try to parse refresh token error", e)
-						break
-					}
-					_, webToken, err = DoLoginHelper(refreshToken)
-					if err != nil {
-						logger.Verboseln("try to use refresh token from tokenId error", e)
-						break
-					}
-					fmt.Println("Token重新自动登录成功")
-					// save new refresh token
-					u.RefreshToken = refreshToken
-				} else {
-					// login fail plugin callback
-					params.Result = "fail"
-					params.OldToken = u.RefreshToken
-					params.NewToken = ""
-					if er := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(u), params); er != nil {
-						logger.Verbosef("UserTokenRefreshFinishCallback error: " + er.Error())
-					}
-				}
-				break
+			cloudUser, err := config.SetupUserByCookie(u.OpenapiToken, u.WebapiToken,
+				u.TicketId, u.UserId,
+				config.Config.DeviceId, config.Config.DeviceName,
+				config.Config.ClientId, config.Config.ClientSecret)
+			if cloudUser == nil {
+				logger.Verboseln("尝试登录失败: ", err)
+				fmt.Println("尝试登录失败，请使用 login 命令进行重新登录")
+				return nil
 			}
-			// plugin param
-			params.Result = "success"
-			params.OldToken = u.RefreshToken
-			params.NewToken = webToken.RefreshToken
-
-			// success login, save new token and access token
-			u.RefreshToken = webToken.RefreshToken
-			u.WebToken = webToken
 
 			// save
 			SaveConfigFunc(nil)
 			// reload
 			ReloadConfigFunc(nil)
-
-			// do plugin callback
-			if er := plugin.UserTokenRefreshFinishCallback(plugins.GetContext(u), params); er != nil {
-				logger.Verbosef("UserTokenRefreshFinishCallback error: " + er.Error())
-			}
 
 			return config.Config.ActiveUser()
 		}

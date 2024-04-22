@@ -25,15 +25,12 @@ import (
 	"github.com/tickstep/aliyunpan/internal/utils"
 	"github.com/tickstep/aliyunpan/library/requester/transfer"
 	"github.com/tickstep/library-go/converter"
-	"github.com/tickstep/library-go/logger"
 	"github.com/tickstep/library-go/requester/rio/speeds"
 	"github.com/urfave/cli"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
-	"sync/atomic"
-	"time"
 )
 
 type (
@@ -49,7 +46,6 @@ type (
 		NoCheck              bool
 		ShowProgress         bool
 		DriveId              string
-		UseInternalUrl       bool     // 是否使用内置链接
 		ExcludeNames         []string // 排除的文件名，包括文件夹和文件。即这些文件/文件夹不进行下载，支持正则表达式
 	}
 
@@ -219,23 +215,24 @@ func downloadPrintFormat(load int) string {
 // RunDownload 执行下载网盘内文件
 func RunDownload(paths []string, options *DownloadOptions) {
 	activeUser := GetActiveUser()
-	activeUser.PanClient().EnableCache()
-	activeUser.PanClient().ClearCache()
-	defer activeUser.PanClient().DisableCache()
-	// pan token expired checker
-	continueFlag := int32(0)
-	atomic.StoreInt32(&continueFlag, 0)
-	defer func() {
-		atomic.StoreInt32(&continueFlag, 1)
-	}()
-	go func(flag *int32) {
-		for atomic.LoadInt32(flag) == 0 {
-			time.Sleep(time.Duration(1) * time.Minute)
-			if RefreshTokenInNeed(activeUser, config.Config.DeviceName) {
-				logger.Verboseln("update access token for download task")
-			}
-		}
-	}(&continueFlag)
+	activeUser.PanClient().OpenapiPanClient().EnableCache()
+	activeUser.PanClient().OpenapiPanClient().ClearCache()
+	defer activeUser.PanClient().OpenapiPanClient().DisableCache()
+
+	//// pan token expired checker
+	//continueFlag := int32(0)
+	//atomic.StoreInt32(&continueFlag, 0)
+	//defer func() {
+	//	atomic.StoreInt32(&continueFlag, 1)
+	//}()
+	//go func(flag *int32) {
+	//	for atomic.LoadInt32(flag) == 0 {
+	//		time.Sleep(time.Duration(1) * time.Minute)
+	//		if RefreshWebTokenInNeed(activeUser, config.Config.DeviceName) {
+	//			logger.Verboseln("update access token for download task")
+	//		}
+	//	}
+	//}(&continueFlag)
 
 	if options == nil {
 		options = &DownloadOptions{}
@@ -258,7 +255,6 @@ func RunDownload(paths []string, options *DownloadOptions) {
 		MaxRate:                    config.Config.MaxDownloadRate,
 		InstanceStateStorageFormat: downloader.InstanceStateStorageFormatJSON,
 		ShowProgress:               options.ShowProgress,
-		UseInternalUrl:             config.Config.TransferUrlType == 2,
 		ExcludeNames:               options.ExcludeNames,
 	}
 	if cfg.CacheSize == 0 {
@@ -299,7 +295,6 @@ func RunDownload(paths []string, options *DownloadOptions) {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("\n[*] 注意：由于阿里云盘接口的限制，当前不支持>100M单个文件的下载。")
 	fmt.Printf("\n[0] 当前文件下载最大并发量为: %d, 下载缓存为: %s\n\n", options.Parallel, converter.ConvertFileSize(int64(cfg.CacheSize), 2))
 
 	var (

@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"github.com/olekukonko/tablewriter"
 	"github.com/tickstep/aliyunpan-api/aliyunpan"
+	"github.com/tickstep/aliyunpan-api/aliyunpan_web"
 	"github.com/tickstep/aliyunpan/cmder"
 	"github.com/tickstep/aliyunpan/cmder/cmdtable"
+	"github.com/tickstep/aliyunpan/internal/config"
 	"github.com/tickstep/library-go/converter"
 	"github.com/tickstep/library-go/logger"
 	"github.com/urfave/cli"
@@ -60,6 +62,14 @@ func CmdRecycle() cli.Command {
 				Usage:     "列出回收站文件列表",
 				UsageText: cmder.App().Name + " recycle list",
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					RunRecycleList(parseDriveId(c))
 					return nil
 				},
@@ -78,6 +88,14 @@ func CmdRecycle() cli.Command {
 				UsageText:   cmder.App().Name + " recycle restore <file_id 1> <file_id 2> <file_id 3> ...",
 				Description: `根据文件/目录的 fs_id, 还原回收站指定的文件或目录`,
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					if c.NArg() <= 0 {
 						cli.ShowCommandHelp(c, c.Command.Name)
 						return nil
@@ -100,6 +118,14 @@ func CmdRecycle() cli.Command {
 				UsageText:   cmder.App().Name + " recycle delete [-all] <file_id 1> <file_id 2> <file_id 3> ...",
 				Description: `根据文件/目录的 file_id 或 -all 参数, 删除回收站指定的文件或目录或清空回收站`,
 				Action: func(c *cli.Context) error {
+					if config.Config.ActiveUser() == nil {
+						fmt.Println("未登录账号")
+						return nil
+					}
+					if config.Config.ActiveUser().PanClient().WebapiPanClient() == nil {
+						fmt.Println("WEB客户端未登录，请登录后再使用该命令")
+						return nil
+					}
 					if c.Bool("all") {
 						// 清空回收站
 						RunRecycleClear(parseDriveId(c))
@@ -132,7 +158,7 @@ func CmdRecycle() cli.Command {
 // RunRecycleList 执行列出回收站文件列表
 func RunRecycleList(driveId string) {
 	panClient := GetActivePanClient()
-	fdl, err := panClient.RecycleBinFileListGetAll(&aliyunpan.RecycleBinFileListParam{
+	fdl, err := panClient.WebapiPanClient().RecycleBinFileListGetAll(&aliyunpan_web.RecycleBinFileListParam{
 		DriveId: driveId,
 		Limit:   100,
 	})
@@ -174,7 +200,7 @@ func RunRecycleRestore(driveId string, fidStrList ...string) {
 		return
 	}
 
-	rbfr, err := panClient.RecycleBinFileRestore(restoreFileList)
+	rbfr, err := panClient.WebapiPanClient().RecycleBinFileRestore(restoreFileList)
 	if rbfr != nil && len(rbfr) > 0 {
 		fmt.Printf("还原文件成功\n")
 		return
@@ -203,7 +229,7 @@ func RunRecycleDelete(driveId string, fidStrList ...string) {
 		return
 	}
 
-	rbfr, err := panClient.RecycleBinFileDelete(deleteFileList)
+	rbfr, err := panClient.WebapiPanClient().RecycleBinFileDelete(deleteFileList)
 	if rbfr != nil && len(rbfr) > 0 {
 		fmt.Printf("彻底删除文件成功\n")
 		return
@@ -220,7 +246,7 @@ func RunRecycleClear(driveId string) {
 	panClient := GetActivePanClient()
 
 	// 提交清空回收站异步任务
-	r, err := panClient.RecycleBinFileClear(&aliyunpan.RecycleBinFileClearParam{
+	r, err := panClient.WebapiPanClient().RecycleBinFileClear(&aliyunpan_web.RecycleBinFileClearParam{
 		DriveId: driveId,
 	})
 	if err != nil {
@@ -229,7 +255,7 @@ func RunRecycleClear(driveId string) {
 	}
 
 	for i := 0; i < 10; i++ {
-		ar, err1 := panClient.AsyncTaskQueryStatus(&aliyunpan.AsyncTaskQueryStatusParam{
+		ar, err1 := panClient.WebapiPanClient().AsyncTaskQueryStatus(&aliyunpan_web.AsyncTaskQueryStatusParam{
 			AsyncTaskId: r.AsyncTaskId,
 		})
 		if err1 != nil {

@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,7 @@ import (
 	"github.com/tickstep/aliyunpan-api/aliyunpan"
 	"github.com/tickstep/aliyunpan/cmder"
 	"github.com/tickstep/aliyunpan/internal/config"
+	"github.com/tickstep/aliyunpan/internal/global"
 	"github.com/tickstep/aliyunpan/internal/log"
 	"github.com/tickstep/aliyunpan/internal/syncdrive"
 	"github.com/tickstep/aliyunpan/internal/utils"
@@ -27,7 +28,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -37,16 +37,14 @@ func CmdSync() cli.Command {
 		Usage:     "同步备份功能(Beta)",
 		UsageText: cmder.App().Name + " sync",
 		Description: `
-    备份功能。支持备份本地文件到云盘，备份云盘文件到本地，双向同步备份三种模式。支持JavaScript插件对备份文件进行过滤。
+    备份功能。支持备份本地文件到云盘，备份云盘文件到本地两种模式。支持JavaScript插件对备份文件进行过滤。
     指定本地目录和对应的一个网盘目录，以备份文件。网盘目录必须和本地目录独占使用，不要用作其他用途，不然备份可能会有问题。
 
-	备份功能支持以下三种模式：
+	备份功能支持以下模式：
 	1. upload 
        备份本地文件，即上传本地文件到网盘，始终保持本地文件有一个完整的备份在网盘
 	2. download 
        备份云盘文件，即下载网盘文件到本地，始终保持网盘的文件有一个完整的备份在本地
-	3. sync（慎用！！！双向备份过程会删除文件）
-       双向备份，保持网盘文件和本地文件严格一致
 
 	请输入以下命令查看如何配置和启动：
     aliyunpan sync start -h
@@ -74,7 +72,8 @@ func CmdSync() cli.Command {
    "localFolderPath": "D:/tickstep/Documents/设计文档",
    "panFolderPath": "/sync_drive/我的文档",
    "mode": "upload",
-   "priority": "time"
+   "policy"： "increment"，
+   "driveName": "backup"
   }
  ]
 }
@@ -82,36 +81,30 @@ func CmdSync() cli.Command {
 name - 任务名称
 localFolderPath - 本地目录
 panFolderPath - 网盘目录
-mode - 模式，支持三种: upload(备份本地文件到云盘),download(备份云盘文件到本地),sync(双向同步备份)
-priority - 优先级，只对双向同步备份模式有效。选项支持三种: time-时间优先，local-本地优先，pan-网盘优先
+mode - 备份模式，支持两种: upload(备份本地文件到云盘),download(备份云盘文件到本地)
+policy - 备份策略, 支持两种: exclusive(排他备份文件，目标目录多余的文件会被删除),increment(增量备份文件，目标目录多余的文件不会被删除)
+driveName - 网盘名称，backup(备份盘)，resource(资源盘)
     
 	例子:
 	1. 查看帮助
 	aliyunpan sync start -h
     
-	2. 使用命令行配置启动同步备份服务，将本地目录 D:\tickstep\Documents\设计文档 中的文件备份上传到云盘目录 /sync_drive/我的文档
-	aliyunpan sync start -ldir "D:\tickstep\Documents\设计文档" -pdir "/sync_drive/我的文档" -mode "upload"
+	2. 使用命令行配置启动同步备份服务，将本地目录 D:\tickstep\Documents\设计文档 中的文件备份上传到"备份盘"的云盘目录 /sync_drive/我的文档
+	aliyunpan sync start -ldir "D:\tickstep\Documents\设计文档" -pdir "/sync_drive/我的文档" -mode "upload" -drive "backup"
 
 	3. 使用命令行配置启动同步备份服务，将云盘目录 /sync_drive/我的文档 中的文件备份下载到本地目录 D:\tickstep\Documents\设计文档
 	aliyunpan sync start -ldir "D:\tickstep\Documents\设计文档" -pdir "/sync_drive/我的文档" -mode "download"
 
-	4. 使用命令行配置启动同步备份服务，将云盘目录 /sync_drive/我的文档 和本地目录 D:\tickstep\Documents\设计文档 的文件进行双向同步
-       同时配置同步优先选项为本地文件优先，并显示同步过程的日志
-	aliyunpan sync start -ldir "D:\tickstep\Documents\设计文档" -pdir "/sync_drive/我的文档" -mode "sync" -pri "local" -log true
-
-	5. 使用命令行配置启动同步备份服务，将本地目录 D:\tickstep\Documents\设计文档 中的文件备份到云盘目录 /sync_drive/我的文档
+	4. 使用命令行配置启动同步备份服务，将本地目录 D:\tickstep\Documents\设计文档 中的文件备份到云盘目录 /sync_drive/我的文档
        同时配置下载并发为2，上传并发为1，下载分片大小为256KB，上传分片大小为1MB
 	aliyunpan sync start -ldir "D:\tickstep\Documents\设计文档" -pdir "/sync_drive/我的文档" -mode "upload" -dp 2 -up 1 -dbs 256 -ubs 1024
     
-	6. 使用配置文件启动同步备份服务，使用配置文件可以支持同时启动多个备份任务。配置文件必须存在，否则启动失败。
+	5. 使用配置文件启动同步备份服务，使用配置文件可以支持同时启动多个备份任务。配置文件必须存在，否则启动失败。
 	aliyunpan sync start
 
-	7. 使用配置文件启动同步备份服务，并配置下载并发为2，上传并发为1，下载分片大小为256KB，上传分片大小为1MB
+	6. 使用配置文件启动同步备份服务，并配置下载并发为2，上传并发为1，下载分片大小为256KB，上传分片大小为1MB
 	aliyunpan sync start -dp 2 -up 1 -dbs 256 -ubs 1024
 
-	8. 当你本地同步目录文件非常多，或者云盘同步目录文件非常多，为了后期更快更精准同步文件，可以先进行文件扫描并构建同步数据库，然后再正常启动同步任务。如下所示：
-	aliyunpan sync start -step scan
-	aliyunpan sync start
 `,
 				Action: func(c *cli.Context) error {
 					if config.Config.ActiveUser() == nil {
@@ -155,27 +148,22 @@ priority - 优先级，只对双向同步备份模式有效。选项支持三种
 						uploadBlockSize = aliyunpan.DefaultChunkSize
 					}
 
-					opt := c.String("pri")
 					var syncOpt syncdrive.SyncPriorityOption = syncdrive.SyncPriorityTimestampFirst
-					if opt == "local" {
-						syncOpt = syncdrive.SyncPriorityLocalFirst
-					} else if opt == "pan" {
-						syncOpt = syncdrive.SyncPriorityPanFirst
-					} else {
-						syncOpt = syncdrive.SyncPriorityTimestampFirst
-					}
-
-					// 任务类型
-					step := syncdrive.StepSyncFile
-					stepVar := c.String("step")
-					if stepVar == "scan" {
-						step = syncdrive.StepScanFile
-					}
+					//opt := c.String("pri")
+					//if opt == "local" {
+					//	syncOpt = syncdrive.SyncPriorityLocalFirst
+					//} else if opt == "pan" {
+					//	syncOpt = syncdrive.SyncPriorityPanFirst
+					//} else {
+					//	syncOpt = syncdrive.SyncPriorityTimestampFirst
+					//}
 
 					var task *syncdrive.SyncTask
 					localDir := c.String("ldir")
 					panDir := c.String("pdir")
 					mode := c.String("mode")
+					policy := c.String("policy")
+					driveName := c.String("drive")
 					if localDir != "" && panDir != "" {
 						// make path absolute
 						if !utils.IsLocalAbsPath(localDir) {
@@ -203,39 +191,57 @@ priority - 优先级，只对双向同步备份模式有效。选项支持三种
 						task = &syncdrive.SyncTask{}
 						task.LocalFolderPath = path.Clean(strings.ReplaceAll(localDir, "\\", "/"))
 						task.PanFolderPath = panDir
-						task.Mode = syncdrive.UploadOnly
-						if mode == string(syncdrive.UploadOnly) {
-							task.Mode = syncdrive.UploadOnly
-						} else if mode == string(syncdrive.DownloadOnly) {
-							task.Mode = syncdrive.DownloadOnly
+						task.Mode = syncdrive.Upload
+						if mode == string(syncdrive.Upload) {
+							task.Mode = syncdrive.Upload
+						} else if mode == string(syncdrive.Download) {
+							task.Mode = syncdrive.Download
 						} else if mode == string(syncdrive.SyncTwoWay) {
 							task.Mode = syncdrive.SyncTwoWay
 						} else {
-							task.Mode = syncdrive.UploadOnly
+							task.Mode = syncdrive.Upload
+						}
+						if policy == string(syncdrive.SyncPolicyExclusive) {
+							task.Policy = syncdrive.SyncPolicyExclusive
+						} else if policy == string(syncdrive.SyncPolicyIncrement) {
+							task.Policy = syncdrive.SyncPolicyIncrement
+						} else {
+							task.Policy = syncdrive.SyncPolicyIncrement
 						}
 						task.Name = path.Base(task.LocalFolderPath)
 						task.Id = utils.Md5Str(task.LocalFolderPath)
 						task.Priority = syncOpt
 						task.UserId = activeUser.UserId
+
+						// drive id
+						task.DriveName = driveName
+						if strings.ToLower(task.DriveName) == "backup" {
+							task.DriveId = activeUser.DriveList.GetFileDriveId()
+						} else if strings.ToLower(task.DriveName) == "resource" {
+							task.DriveId = activeUser.DriveList.GetResourceDriveId()
+						}
+						if len(task.DriveId) == 0 {
+							task.DriveName = "backup"
+							task.DriveId = activeUser.DriveList.GetFileDriveId()
+						}
 					}
 
-					// 获取同步文件锁，保证同步操作单实例
-					//locker := filelocker.NewFileLocker(config.GetLockerDir() + "/aliyunpan-sync")
-					//if e := filelocker.LockFile(locker, 0755, true, 5*time.Second); e != nil {
-					//	logger.Verboseln(e)
-					//	fmt.Println("本应用其他实例正在执行同步，请先停止或者等待其完成")
-					//	return nil
-					//}
+					cycleMode := syncdrive.CycleInfiniteLoop
+					if c.String("cycle") == "onetime" {
+						cycleMode = syncdrive.CycleOneTime
+					} else {
+						cycleMode = syncdrive.CycleInfiniteLoop
+					}
+					RunSync(task, cycleMode, dp, up, downloadBlockSize, uploadBlockSize, syncOpt, c.Int("ldt"))
 
-					RunSync(task, dp, up, downloadBlockSize, uploadBlockSize, syncOpt, c.Int("ldt"), step)
-
-					// 释放文件锁
-					//if locker != nil {
-					//	filelocker.UnlockFile(locker)
-					//}
 					return nil
 				},
 				Flags: []cli.Flag{
+					cli.StringFlag{
+						Name:  "drive",
+						Usage: "drive name, 网盘名称，backup(备份盘)，resource(资源盘)",
+						Value: "backup",
+					},
 					cli.StringFlag{
 						Name:  "ldir",
 						Usage: "local dir, 本地文件夹完整路径",
@@ -246,13 +252,23 @@ priority - 优先级，只对双向同步备份模式有效。选项支持三种
 					},
 					cli.StringFlag{
 						Name:  "mode",
-						Usage: "备份模式, 支持三种: upload(备份本地文件到云盘),download(备份云盘文件到本地),sync(双向同步备份)",
+						Usage: "备份模式, 支持两种: upload(备份本地文件到云盘),download(备份云盘文件到本地)",
 						Value: "upload",
 					},
 					cli.StringFlag{
-						Name:  "pri",
-						Usage: "优先级priority，只对双向同步备份模式有效。当网盘和本地存在同名文件，优先使用哪个，选项支持三种: time-时间优先，local-本地优先，pan-网盘优先",
-						Value: "time",
+						Name:  "policy",
+						Usage: "备份策略, 支持两种: exclusive(排他备份文件，目标目录多余的文件会被删除),increment(增量备份文件，目标目录多余的文件不会被删除)",
+						Value: "increment",
+					},
+					//cli.StringFlag{
+					//	Name:  "pri",
+					//	Usage: "同步优先级，只对sync模式有效。当网盘和本地存在同名文件，优先使用哪个，选项支持三种: time-时间优先，local-本地优先，pan-网盘优先",
+					//	Value: "time",
+					//},
+					cli.StringFlag{
+						Name:  "cycle",
+						Usage: "备份周期, 支持两种: infinity(永久循环备份),onetime(只运行一次备份)",
+						Value: "infinity",
 					},
 					cli.IntFlag{
 						Name:  "dp",
@@ -284,41 +300,37 @@ priority - 优先级，只对双向同步备份模式有效。选项支持三种
 						Usage: "local delay time，本地文件修改检测延迟间隔，单位秒。如果本地文件会被频繁修改，例如录制视频文件，配置好该时间可以避免上传未录制好的文件",
 						Value: 3,
 					},
-					cli.StringFlag{
-						Name:  "step",
-						Usage: "task step 任务步骤, 支持两种: scan(只扫描并建立同步数据库),sync(正常启动同步任务)",
-						Value: "sync",
-					},
 				},
 			},
 		},
 	}
 }
 
-func RunSync(defaultTask *syncdrive.SyncTask, fileDownloadParallel, fileUploadParallel int, downloadBlockSize, uploadBlockSize int64,
-	flag syncdrive.SyncPriorityOption, localDelayTime int, taskStep syncdrive.TaskStep) {
-	useInternalUrl := config.Config.TransferUrlType == 2
+func RunSync(defaultTask *syncdrive.SyncTask, cycleMode syncdrive.CycleMode, fileDownloadParallel, fileUploadParallel int, downloadBlockSize, uploadBlockSize int64,
+	flag syncdrive.SyncPriorityOption, localDelayTime int) {
 	maxDownloadRate := config.Config.MaxDownloadRate
 	maxUploadRate := config.Config.MaxUploadRate
 	activeUser := GetActiveUser()
 	panClient := activeUser.PanClient()
-	panClient.DisableCache()
+	panClient.OpenapiPanClient().ClearCache()
+	panClient.OpenapiPanClient().DisableCache()
 
-	// pan token expired checker
-	continueFlag := int32(0)
-	atomic.StoreInt32(&continueFlag, 0)
-	defer func() {
-		atomic.StoreInt32(&continueFlag, 1)
-	}()
-	go func(flag *int32) {
-		for atomic.LoadInt32(flag) == 0 {
-			time.Sleep(time.Duration(1) * time.Minute)
-			if RefreshTokenInNeed(activeUser, config.Config.DeviceName) {
-				logger.Verboseln("update access token for sync task")
-				panClient.UpdateToken(activeUser.WebToken)
-			}
-		}
-	}(&continueFlag)
+	//// pan token expired checker
+	//continueFlag := int32(0)
+	//atomic.StoreInt32(&continueFlag, 0)
+	//defer func() {
+	//	atomic.StoreInt32(&continueFlag, 1)
+	//}()
+	//go func(flag *int32) {
+	//	for atomic.LoadInt32(flag) == 0 {
+	//		time.Sleep(time.Duration(1) * time.Minute)
+	//		if RefreshWebTokenInNeed(activeUser, config.Config.DeviceName) {
+	//			logger.Verboseln("update access token for sync task")
+	//			userWebToken := NewWebLoginToken(activeUser.WebapiToken.AccessToken, activeUser.WebapiToken.Expired)
+	//			panClient.WebapiPanClient().UpdateToken(userWebToken)
+	//		}
+	//	}
+	//}(&continueFlag)
 
 	syncFolderRootPath := config.GetSyncDriveDir()
 	if b, e := utils.PathExists(syncFolderRootPath); e == nil {
@@ -334,10 +346,6 @@ func RunSync(defaultTask *syncdrive.SyncTask, fileDownloadParallel, fileUploadPa
 	}
 
 	fmt.Println("启动同步备份进程")
-	typeUrlStr := "默认链接"
-	if useInternalUrl {
-		typeUrlStr = "阿里ECS内部链接"
-	}
 
 	// 文件同步记录器
 	fileRecorder := log.NewFileRecorder(config.GetLogDir() + "/sync_file_records.csv")
@@ -347,37 +355,46 @@ func RunSync(defaultTask *syncdrive.SyncTask, fileDownloadParallel, fileUploadPa
 		FileUploadParallel:                fileUploadParallel,
 		FileDownloadBlockSize:             downloadBlockSize,
 		FileUploadBlockSize:               uploadBlockSize,
-		UseInternalUrl:                    useInternalUrl,
 		MaxDownloadRate:                   maxDownloadRate,
 		MaxUploadRate:                     maxUploadRate,
 		SyncPriority:                      flag,
 		LocalFileModifiedCheckIntervalSec: localDelayTime,
 		FileRecorder:                      fileRecorder,
 	}
-	syncMgr := syncdrive.NewSyncTaskManager(activeUser, activeUser.DriveList.GetFileDriveId(), panClient, syncFolderRootPath, option)
+	syncMgr := syncdrive.NewSyncTaskManager(activeUser, panClient, syncFolderRootPath, option)
 	syncConfigFile := syncMgr.ConfigFilePath()
 	if tasks != nil {
 		syncConfigFile = "(使用命令行配置)"
 	}
-	fmt.Printf("备份配置文件：%s\n链接类型：%s\n下载并发：%d\n上传并发：%d\n下载分片大小：%s\n上传分片大小：%s\n",
-		syncConfigFile, typeUrlStr, fileDownloadParallel, fileUploadParallel, converter.ConvertFileSize(downloadBlockSize, 2),
+	fmt.Printf("备份配置文件：%s\n下载并发：%d\n上传并发：%d\n下载分片大小：%s\n上传分片大小：%s\n",
+		syncConfigFile, fileDownloadParallel, fileUploadParallel, converter.ConvertFileSize(downloadBlockSize, 2),
 		converter.ConvertFileSize(uploadBlockSize, 2))
-	if _, e := syncMgr.Start(tasks, taskStep); e != nil {
+	if _, e := syncMgr.Start(tasks, cycleMode); e != nil {
 		fmt.Println("启动任务失败：", e)
 		return
 	}
 
-	if taskStep != syncdrive.StepScanFile {
-		_, ok := os.LookupEnv("ALIYUNPAN_DOCKER")
-		if ok {
-			// in docker container
+	_, ok := os.LookupEnv("ALIYUNPAN_DOCKER")
+	if ok {
+		// in docker container
+		if cycleMode == syncdrive.CycleInfiniteLoop {
 			// 使用休眠以节省CPU资源
 			fmt.Println("本命令不会退出，程序正在以Docker的方式运行。如需退出请借助Docker提供的方式。")
 			for {
 				time.Sleep(60 * time.Second)
 			}
 		} else {
-			if config.IsAppInCliMode {
+			for {
+				if syncMgr.IsAllTaskCompletely() {
+					fmt.Println("所有备份任务已完成")
+					break
+				}
+				time.Sleep(5 * time.Second)
+			}
+		}
+	} else {
+		if cycleMode == syncdrive.CycleInfiniteLoop {
+			if global.IsAppInCliMode {
 				// in cmd mode
 				c := ""
 				fmt.Println("本命令不会退出，如需要结束同步备份进程请输入y，然后按Enter键进行停止。")
@@ -391,15 +408,19 @@ func RunSync(defaultTask *syncdrive.SyncTask, fileDownloadParallel, fileUploadPa
 					time.Sleep(60 * time.Second)
 				}
 			}
+		} else {
+			for {
+				if syncMgr.IsAllTaskCompletely() {
+					fmt.Println("所有备份任务已完成")
+					break
+				}
+				time.Sleep(5 * time.Second)
+			}
 		}
-
-		fmt.Println("正在停止同步备份任务，请稍等...")
 	}
+
+	fmt.Println("正在退出同步备份任务，请稍等...")
 
 	// stop task
-	syncMgr.Stop(taskStep)
-
-	if taskStep == syncdrive.StepScanFile {
-		fmt.Println("\n已完成文件扫描和同步数据库的构建，可以启动任务同步了")
-	}
+	syncMgr.Stop()
 }
